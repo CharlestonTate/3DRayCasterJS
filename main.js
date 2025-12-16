@@ -9,7 +9,7 @@ canvas.height = 600;
 let FOV = Math.PI / 3; // Field of view
 let RESOLUTION = 0.01; // Ray resolution
 let WALL_HEIGHT = 1; // Height of walls
-let SPEED = 0.05; // Player movement speed
+let SPEED = 0.02; // Player movement speed
 let TURN_SPEED = 0.02; // Player turning speed
 const SLIDE_SPEED_MULTIPLIER = 0.7; // Speed multiplier when sliding along walls
 
@@ -38,7 +38,7 @@ let rooms = [
     [
         [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-        [1, 0, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1],
+        [1, 0, 0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1],
         [1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
         [1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 1],
         [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
@@ -114,6 +114,268 @@ let npc = {
   punchTimer: 0, // Add punch animation timer
 };
 
+// NPC sprite cycling
+let npcSprites = []; // Array to hold all NPC images
+let currentNpcIndex = 0; // Current NPC sprite index
+const npcImagePaths = [
+  "npcs/ethan-removebg-preview.png",
+  "npcs/ethan.jpg",
+  "npcs/npc.png",
+  "npcs/npc1.jpg",
+  "npcs/npc2.jpg",
+  "npcs/npc3.png"
+];
+
+// Load all NPC sprites
+npcImagePaths.forEach(path => {
+  const img = new Image();
+  img.src = path;
+  npcSprites.push(img);
+});
+
+// Set default NPC sprite to ethan-removebg-preview.png (index 0)
+npc.sprite = npcSprites[0];
+
+// Gun animation system
+let gunState = 'idle'; // 'idle', 'shooting', 'reloading'
+let gunFrame = 0;
+let gunAnimationTimer = 0;
+const GUN_SHOOT_FRAME_TIME = 0.1; // Time per shoot frame (seconds)
+const GUN_RELOAD_FRAME_TIME = 0.12; // Time per reload frame (seconds) - slowed down
+const GUN_SHOOT_FRAMES = 3; // gun_shoot.png, gun_shoot2.png, gun_shoot.png
+const GUN_RELOAD_FRAMES = 14; // gun_reload (2) through (15)
+const GUN_SIZE_MULTIPLIER = 0.6; // Easy to adjust gun size (0.3 = 30%, 0.5 = 50%, etc.)
+
+// Ammo system
+let ammo = 3; // Starting ammo
+const MAX_AMMO = 3; // Maximum ammo capacity
+
+// Gun sound effects
+// Multiple shoot sounds for variety
+let shootSounds = [
+    new Audio('sounds/shotgun1.mp3'),
+    new Audio('sounds/shotgun2.mp3')
+];
+shootSounds.forEach(sound => sound.volume = 0.3);
+let emptySound = new Audio('sounds/shotgun_empty.mp3');
+emptySound.volume = 0.4;
+let reloadSound = new Audio('sounds/shotgun_reload.mp3');
+reloadSound.volume = 0.5;
+// Multiple shell sounds for variety
+let shellSounds = [
+    new Audio('sounds/shotgun_shell1.mp3'),
+    new Audio('sounds/shotgun_shell2.mp3'),
+    new Audio('sounds/shotgun_shell3.mp3')
+];
+shellSounds.forEach(sound => sound.volume = 0.4);
+let shellSoundTimer = 0; // Timer for shell drop sound
+const SHELL_SOUND_DELAY = 0.5; // Delay in seconds before shell sound plays
+
+// Gun vibration system (for empty click)
+let gunVibrationX = 0;
+let gunVibrationY = 0;
+let gunVibrationIntensity = 0;
+const GUN_VIBRATION_DECAY = 0.85; // How quickly vibration fades
+const GUN_VIBRATION_INTENSITY = 8; // Base vibration intensity
+
+// Screen shake system
+let screenShakeX = 0;
+let screenShakeY = 0;
+let screenShakeIntensity = 0;
+const SCREEN_SHAKE_DECAY = 0.9; // How quickly shake fades
+const SCREEN_SHAKE_INTENSITY = 30; // Base shake intensity
+
+// Debug menu sound and animation
+let debugMenuSound = new Audio('sounds/debugStuff.mp3');
+debugMenuSound.volume = 0;
+let debugMenuSoundTargetVolume = 0.2;
+let debugMenuAnimation = 0; // 0 to 1, animation progress
+const DEBUG_MENU_ANIMATION_SPEED = 0.08; // How fast panels slide in (slower for smoother transition)
+const DEBUG_SOUND_FADE_SPEED = 0.05; // How fast sound fades in/out
+
+// Gun images
+let gunIdle = new Image();
+gunIdle.src = "gun/gunSRC/gun_idle1.png";
+
+let gunShootFrames = [];
+gunShootFrames[0] = new Image();
+gunShootFrames[0].src = "gun/gunSRC/gun_shoot.png";
+gunShootFrames[1] = new Image();
+gunShootFrames[1].src = "gun/gunSRC/gun_shoot2.png";
+
+let gunReloadFrames = [];
+for (let i = 2; i <= 15; i++) {
+  gunReloadFrames[i - 2] = new Image();
+  gunReloadFrames[i - 2].src = `gun/gunSRC/gun_reload (${i}).png`;
+}
+
+// Bullet hit range
+const BULLET_HIT_RANGE = 8.0; // Maximum range bullets can hit targets
+
+// Hit marker class - stores world position and converts to screen each frame
+class HitMarker {
+    constructor(x, y, z) {
+        this.x = x; // World X position
+        this.y = y; // World Y position
+        this.z = z; // World Z position (height)
+        this.age = 0; // Age of hit marker
+        this.lifetime = 1.0; // How long hit marker stays visible (1 second)
+        this.active = true;
+    }
+    
+    update(deltaTime) {
+        this.age += deltaTime;
+        if (this.age >= this.lifetime) {
+            this.active = false;
+        }
+    }
+    
+    getOpacity() {
+        // Fade out over the last 30% of lifetime
+        const fadeStartTime = this.lifetime * 0.7;
+        if (this.age > fadeStartTime) {
+            return 1 - ((this.age - fadeStartTime) / (this.lifetime - fadeStartTime));
+        }
+        return 1;
+    }
+    
+    // Convert world position to screen position
+    getScreenPosition() {
+        const dx = this.x - player.x;
+        const dy = this.y - player.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        const angle = Math.atan2(dy, dx) - player.angle;
+        
+        // Normalize angle to -PI to PI
+        let normalizedAngle = angle;
+        while (normalizedAngle > Math.PI) normalizedAngle -= Math.PI * 2;
+        while (normalizedAngle < -Math.PI) normalizedAngle += Math.PI * 2;
+        
+        // Check if within FOV and in front of player
+        if (Math.abs(normalizedAngle) < FOV / 2 && distance > 0.1) {
+            // Calculate horizontal screen position
+            const screenX = (normalizedAngle / FOV) * canvas.width + canvas.width / 2;
+            
+            // Calculate vertical screen position
+            const verticalShift = Math.tan(verticalAngle) * canvas.height;
+            const heightOffset = ((this.z - player.height) / distance) * canvas.height * 0.5;
+            const screenY = canvas.height / 2 + verticalShift + heightOffset;
+            
+            return {
+                x: screenX,
+                y: screenY,
+                distance: distance,
+                visible: true
+            };
+        }
+        
+        return { visible: false };
+    }
+}
+
+// Array to store active hit markers
+let hitMarkers = [];
+
+// Bullet class for future bullet simulation
+class Bullet {
+    constructor(x, y, angle, verticalAngle = 0) {
+        this.x = x; // Starting X position
+        this.y = y; // Starting Y position
+        this.z = player.height; // Starting Z position (height)
+        this.angle = angle; // Horizontal angle (direction)
+        this.verticalAngle = verticalAngle; // Vertical angle (up/down)
+        this.speed = 0.3; // Bullet speed per frame
+        this.lifetime = 2.0; // Time in seconds before bullet despawns
+        this.age = 0; // Current age of bullet
+        this.damage = 10; // Damage the bullet deals
+        this.active = true; // Whether bullet is still active
+        this.hasHit = false; // Whether bullet has already hit something
+    }
+    
+    update(deltaTime) {
+        if (!this.active || this.hasHit) return;
+        
+        // Calculate distance from starting position
+        const distanceFromStart = Math.sqrt(
+            Math.pow(this.x - player.x, 2) + 
+            Math.pow(this.y - player.y, 2)
+        );
+        
+        // Check if bullet is within hit range
+        if (distanceFromStart > BULLET_HIT_RANGE) {
+            this.active = false;
+            return;
+        }
+        
+        // Update age
+        this.age += deltaTime;
+        if (this.age >= this.lifetime) {
+            this.active = false;
+            return;
+        }
+        
+        // Move bullet forward in its direction
+        const moveX = Math.cos(this.angle) * this.speed;
+        const moveY = Math.sin(this.angle) * this.speed;
+        const moveZ = Math.sin(this.verticalAngle) * this.speed; // Vertical movement
+        
+        const newX = this.x + moveX;
+        const newY = this.y + moveY;
+        const newZ = this.z + moveZ;
+        
+        // Check for collisions with walls
+        const mapX = Math.floor(newX);
+        const mapY = Math.floor(newY);
+        
+        if (mapX >= 0 && mapX < rooms[currentRoom][0].length &&
+            mapY >= 0 && mapY < rooms[currentRoom].length) {
+            if (rooms[currentRoom][mapY][mapX] === 1) {
+                // Hit a wall - deactivate bullet (hit marker already created by instant detection)
+                this.hasHit = true;
+                this.active = false;
+                return;
+            }
+        }
+        
+        // Check for collisions with NPC
+        if (npc.isVisible) {
+            const dx = newX - npc.x;
+            const dy = newY - npc.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance < 0.5) { // NPC hit radius
+                // Hit NPC - deactivate bullet (hit marker already created by instant detection)
+                this.hasHit = true;
+                this.active = false;
+                return;
+            }
+        }
+        
+        // Update position if no collision
+        this.x = newX;
+        this.y = newY;
+        this.z = newZ;
+        
+        // Check if bullet hit ground
+        if (this.z <= 0) {
+            this.z = 0;
+            this.active = false;
+        }
+    }
+    
+    // Check if bullet hits a target at given position
+    checkHit(targetX, targetY, targetZ = 0, hitRadius = 0.5) {
+        const dx = this.x - targetX;
+        const dy = this.y - targetY;
+        const dz = this.z - targetZ;
+        const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        return distance < hitRadius;
+    }
+}
+
+// Array to store active bullets
+let bullets = [];
+
 // Dialogue menu state
 let dialogueMenuVisible = false;
 let dialogueOptions = [
@@ -131,14 +393,11 @@ let selectedOption = 0;
 let lastMenuKeyPress = 0; // Add cooldown for menu navigation
 const MENU_KEY_COOLDOWN = 150; // Cooldown in milliseconds
 
-// Load NPC sprite
-npc.sprite.src = "ethan-removebg-preview.png "; // Replace with the path to your NPC sprite
-
 // Debug menu state
 let debugMenuVisible = false;
 let miniMapVisible = false;
 let collisionEnabled = true; // Toggle collision detection
-let showFPS = false; // Toggle FPS display
+let showFPS = true; // Toggle FPS display
 let frameCount = 0;
 let fps = 0;
 let lastFpsUpdate = performance.now();
@@ -161,14 +420,17 @@ customFont.load().then(() => {
     document.fonts.add(customFont);
 });
 
-// Add these variables at the top with other game settings
-const JUMP_FORCE = 0.08;
-const GRAVITY_UP = -0.001;
-const GRAVITY_DOWN = -0.0018;
-const MAX_JUMP_HEIGHT = 0.6;
-const MIN_JUMP_HEIGHT = 0.15;
-const JUMP_CHARGE_RATE = 0.05;
-const SHORT_HOP_WINDOW = 0.15; // Time window for short hop in seconds
+// Jump physics constants - easily tweakable
+const JUMP_FORCE = 0.05; // Initial jump velocity
+const GRAVITY_UP = -0.0015; // Gravity when rising (holding space) - lighter
+const GRAVITY_DOWN = -0.0025; // Gravity when falling - stronger
+const MAX_JUMP_HEIGHT = 0.25; // Maximum jump height
+const MIN_JUMP_HEIGHT = 0.15; // Minimum jump height
+const JUMP_CHARGE_RATE = 0.03; // How fast jump height increases while holding space
+const SHORT_HOP_WINDOW = 0.12; // Time window for short hop in seconds
+const SMOOTH_ZONE = 0.08; // Distance from max height where deceleration starts (smaller = smoother)
+const JUMP_ACCELERATION = 0.1; // How quickly jump velocity changes
+const JUMP_DAMPING = 0.95; // Damping factor for jump smoothness
 let jumpCharge = 0;
 let jumpPressedLastFrame = false;
 let jumpStartTime = 0;
@@ -181,9 +443,9 @@ let lastFrameTime = performance.now();
 // Add these variables at the top with other game settings
 const ACCELERATION = 0.15; // How quickly the player accelerates
 const FRICTION = 0.1; // How quickly the player slows down
-const MAX_SPEED = 0.06; // Reduced maximum movement speed
+const MAX_SPEED = 0.04; // Reduced maximum movement speed
 let playerVelocity = { x: 0, y: 0 }; // Track player's current velocity
-let mouseLookEnabled = false; // Track if mouse look is enabled
+let mouseLookEnabled = true; // Track if mouse look is enabled (default: true)
 let MOUSE_SENSITIVITY = 0.003; // Mouse look sensitivity (now adjustable)
 const CAMERA_ACCELERATION = 0.2; // How quickly the camera accelerates
 const CAMERA_FRICTION = 0.1; // How quickly the camera slows down
@@ -260,9 +522,13 @@ function render() {
     spriteRenderInfo = [];
     rayHitBlocks.clear();
 
-    // Clear the canvas
+    // Clear the canvas (before shake so background always covers)
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
+    
+    // Apply screen shake for all game elements
+    ctx.save();
+    ctx.translate(screenShakeX, screenShakeY);
 
     // Draw floor and ceiling
     const screenWidth = canvas.width;
@@ -346,10 +612,10 @@ function render() {
         const verticalShift = Math.tan(verticalAngle) * canvas.height;
         const heightOffset = player.height * (canvas.height / distance);
         
-        // Draw wall slice with vertical offset and height
+        // Draw wall slice with vertical offset and height (heightOffset is added to make jump go up)
         ctx.fillRect(
             ((rayAngle - (player.angle - FOV / 2)) / FOV) * canvas.width,
-            (canvas.height - wallHeight) / 2 + verticalShift - heightOffset,
+            (canvas.height - wallHeight) / 2 + verticalShift + heightOffset,
             (RESOLUTION / FOV) * canvas.width,
             wallHeight
         );
@@ -412,6 +678,77 @@ function render() {
 
     // Draw map overlay if enabled
     drawMapOverlay();
+    
+    // Draw gun
+    drawGun();
+    
+    // Draw crosshair
+    drawCrosshair();
+    
+    // Draw ammo count
+    drawAmmo();
+    
+    // Draw hit markers
+    drawHitMarkers();
+    
+    // Restore canvas state (remove screen shake transform)
+    ctx.restore();
+}
+
+function drawHitMarkers() {
+    for (const marker of hitMarkers) {
+        const screenPos = marker.getScreenPosition();
+        if (!screenPos.visible) continue;
+        
+        const opacity = marker.getOpacity();
+        if (opacity <= 0) continue;
+        
+        const size = 8; // Size of hit marker dot
+        
+        // Draw red dot with glow effect
+        const gradient = ctx.createRadialGradient(screenPos.x, screenPos.y, 0, screenPos.x, screenPos.y, size * 1.5);
+        gradient.addColorStop(0, `rgba(255, 0, 0, ${opacity})`);
+        gradient.addColorStop(0.6, `rgba(255, 0, 0, ${opacity * 0.6})`);
+        gradient.addColorStop(1, `rgba(255, 0, 0, 0)`);
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, size * 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw solid center
+        ctx.fillStyle = `rgba(255, 0, 0, ${opacity})`;
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, size * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Draw white outline for visibility
+        ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.7})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(screenPos.x, screenPos.y, size * 0.6, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+}
+
+function drawAmmo() {
+    const ammoText = `${ammo}/${MAX_AMMO}`;
+    const fontSize = 24;
+    const padding = 10;
+    
+    ctx.font = `${fontSize}px Arial`;
+    const textWidth = ctx.measureText(ammoText).width;
+    
+    // Position in top right corner
+    const x = canvas.width - textWidth - padding;
+    const y = padding + fontSize;
+    
+    // Draw background for better visibility
+    ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+    ctx.fillRect(x - padding, y - fontSize - padding/2, textWidth + padding * 2, fontSize + padding);
+    
+    // Draw ammo text
+    ctx.fillStyle = ammo === 0 ? "red" : "white"; // Red when out of ammo
+    ctx.fillText(ammoText, x, y);
 }
 
 // Draw NPC sprite
@@ -453,8 +790,12 @@ function drawNPC() {
   
       // Preserve aspect ratio of the sprite
       const spriteWidth = spriteHeight * (npc.sprite.width / npc.sprite.height);
+      
+      // Calculate vertical offset based on vertical angle and player height
+      const verticalShift = Math.tan(verticalAngle) * canvas.height;
+      const heightOffset = player.height * (canvas.height / distance);
   
-      // Draw NPC sprite
+      // Draw NPC sprite (adjusted for both vertical angle and player height)
       ctx.save();
       if (npc.isPunched) {
         ctx.filter = 'brightness(200%) saturate(200%) hue-rotate(0deg)';
@@ -462,7 +803,7 @@ function drawNPC() {
       ctx.drawImage(
         npc.sprite,
         screenX - spriteWidth / 2,
-        (canvas.height - spriteHeight) / 2,
+        (canvas.height - spriteHeight) / 2 + verticalShift + heightOffset,
         spriteWidth,
         spriteHeight
       );
@@ -545,9 +886,38 @@ function drawMiniMap() {
 
 // Update the drawDebugMenu function
 function drawDebugMenu() {
+    // Update animation progress (smooth in both directions)
+    if (debugMenuVisible && debugMenuAnimation < 1) {
+        debugMenuAnimation = Math.min(1, debugMenuAnimation + DEBUG_MENU_ANIMATION_SPEED);
+    } else if (!debugMenuVisible && debugMenuAnimation > 0) {
+        debugMenuAnimation = Math.max(0, debugMenuAnimation - DEBUG_MENU_ANIMATION_SPEED);
+    }
+    
+    // Update sound volume fade
+    if (Math.abs(debugMenuSound.volume - debugMenuSoundTargetVolume) > 0.01) {
+        if (debugMenuSound.volume < debugMenuSoundTargetVolume) {
+            debugMenuSound.volume = Math.min(debugMenuSoundTargetVolume, debugMenuSound.volume + DEBUG_SOUND_FADE_SPEED);
+        } else {
+            debugMenuSound.volume = Math.max(debugMenuSoundTargetVolume, debugMenuSound.volume - DEBUG_SOUND_FADE_SPEED);
+        }
+    }
+    
+    // Stop sound if volume reaches 0
+    if (debugMenuSound.volume <= 0.01 && debugMenuSoundTargetVolume === 0) {
+        debugMenuSound.pause();
+        debugMenuSound.currentTime = 0;
+    }
+    
+    // Easing function for smooth animation (ease out)
+    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    const animProgress = easeOut(debugMenuAnimation);
+    
+    // Don't draw if animation is at 0
+    if (animProgress <= 0) return;
+    
     // Define the lines for the left box
     const leftBoxLines = [
-        "Debug Menu (ESC to close)",
+        "Debug Menu (` to close)",
         `Player: (${player.x.toFixed(2)}, ${player.y.toFixed(2)})`,
         `Angle: ${((player.angle * 180 / Math.PI + 360) % 360).toFixed(1)}°`,
         `Vertical: ${(verticalAngle * 180 / Math.PI).toFixed(1)}°`,
@@ -561,8 +931,8 @@ function drawDebugMenu() {
         "WASD: Move",
         "Space: Jump",
         "M: Minimap, C: Collision",
-        "\\: Map Overlay",
-        "=: Toggle Mouse Look",
+        "\\: Map Overlay, .: Cycle NPC",
+        "=: Toggle Keyboard Look",
         "↑/↓: Adjust Sensitivity"
     ];
     const rightBoxLines = 14; // Keep as before for right box
@@ -573,75 +943,82 @@ function drawDebugMenu() {
     const menuWidth = 270;
     const leftBoxHeight = (leftBoxLines.length * lineHeight) + (padding * 2);
     const rightBoxHeight = (rightBoxLines * lineHeight) + (padding * 2);
-    const startX = 10;
+    
+    // Animated positions - left panel slides from left, right panel slides from right
+    const leftPanelStartX = -menuWidth - 20; // Start off-screen left
+    const leftPanelEndX = 10;
+    const leftPanelX = leftPanelStartX + (leftPanelEndX - leftPanelStartX) * animProgress;
     const startY = canvas.height - leftBoxHeight - 10;
-    const rightBoxX = canvas.width - menuWidth - 10;
+    
+    const rightPanelStartX = canvas.width + 20; // Start off-screen right
+    const rightPanelEndX = canvas.width - menuWidth - 10;
+    const rightPanelX = rightPanelStartX + (rightPanelEndX - rightPanelStartX) * animProgress;
     const rightBoxY = canvas.height - rightBoxHeight - 10;
 
-    // Draw left menu background (basic info)
+    // Draw left menu background (basic info) - slides from left
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(startX, startY, menuWidth, leftBoxHeight);
+    ctx.fillRect(leftPanelX, startY, menuWidth, leftBoxHeight);
 
-    // Draw right menu background (raycasting and NPC info)
+    // Draw right menu background (raycasting and NPC info) - slides from right
     ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-    ctx.fillRect(rightBoxX, rightBoxY, menuWidth, rightBoxHeight);
+    ctx.fillRect(rightPanelX, rightBoxY, menuWidth, rightBoxHeight);
 
-    // Draw borders
+    // Draw borders (using animated positions)
     ctx.strokeStyle = "white";
     ctx.lineWidth = 2;
-    ctx.strokeRect(startX, startY, menuWidth, leftBoxHeight);
-    ctx.strokeRect(rightBoxX, rightBoxY, menuWidth, rightBoxHeight);
+    ctx.strokeRect(leftPanelX, startY, menuWidth, leftBoxHeight);
+    ctx.strokeRect(rightPanelX, rightBoxY, menuWidth, rightBoxHeight);
 
     // Set font with lighter weight
     ctx.font = `${fontSize}px Earthbound, monospace`;
     ctx.fillStyle = "white";
     let yOffset = startY + padding + fontSize; // Start after padding
 
-    // Draw each line for the left box
+    // Draw each line for the left box (using animated position)
     for (const line of leftBoxLines) {
-        ctx.fillText(line, startX + 10, yOffset);
+        ctx.fillText(line, leftPanelX + 10, yOffset);
         yOffset += lineHeight;
     }
 
-    // Right box - Ray casting and NPC info (unchanged)
+    // Right box - Ray casting and NPC info (using animated position)
     yOffset = rightBoxY + padding + fontSize;
     ctx.font = `${fontSize}px Earthbound, monospace`;
     ctx.fillStyle = "white";
-    ctx.fillText("Ray Casting Info:", rightBoxX + 10, yOffset);
+    ctx.fillText("Ray Casting Info:", rightPanelX + 10, yOffset);
     yOffset += lineHeight;
     if (rayHitInfo.length > 0) {
         const centerRay = Math.floor(rayHitInfo.length / 2);
         const hit = rayHitInfo[centerRay];
-        ctx.fillText(`Center Ray Hit: (${hit.x.toFixed(2)}, ${hit.y.toFixed(2)})`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Center Ray Hit: (${hit.x.toFixed(2)}, ${hit.y.toFixed(2)})`, rightPanelX + 10, yOffset);
         yOffset += lineHeight;
-        ctx.fillText(`Distance: ${hit.distance.toFixed(2)}`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Distance: ${hit.distance.toFixed(2)}`, rightPanelX + 10, yOffset);
         yOffset += lineHeight;
-        ctx.fillText(`Column: ${hit.column}`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Column: ${hit.column}`, rightPanelX + 10, yOffset);
         yOffset += lineHeight;
-        ctx.fillText(`Angle: ${(hit.angle * 180 / Math.PI).toFixed(1)}°`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Angle: ${(hit.angle * 180 / Math.PI).toFixed(1)}°`, rightPanelX + 10, yOffset);
     }
     yOffset += lineHeight;
-    ctx.fillText("Z-Buffer Info:", rightBoxX + 10, yOffset);
+    ctx.fillText("Z-Buffer Info:", rightPanelX + 10, yOffset);
     yOffset += lineHeight;
     if (zBuffer.length > 0) {
         const centerZ = zBuffer[Math.floor(zBuffer.length / 2)];
-        ctx.fillText(`Center Z: ${centerZ.toFixed(2)}`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Center Z: ${centerZ.toFixed(2)}`, rightPanelX + 10, yOffset);
         yOffset += lineHeight;
-        ctx.fillText(`Min Z: ${Math.min(...zBuffer).toFixed(2)}`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Min Z: ${Math.min(...zBuffer).toFixed(2)}`, rightPanelX + 10, yOffset);
         yOffset += lineHeight;
-        ctx.fillText(`Max Z: ${Math.max(...zBuffer).toFixed(2)}`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Max Z: ${Math.max(...zBuffer).toFixed(2)}`, rightPanelX + 10, yOffset);
     }
     yOffset += lineHeight * 2;
-    ctx.fillText("NPC Info:", rightBoxX + 10, yOffset);
+    ctx.fillText("NPC Info:", rightPanelX + 10, yOffset);
     yOffset += lineHeight;
-    ctx.fillText(`Position: (${npc.x.toFixed(2)}, ${npc.y.toFixed(2)})`, rightBoxX + 10, yOffset);
+    ctx.fillText(`Position: (${npc.x.toFixed(2)}, ${npc.y.toFixed(2)})`, rightPanelX + 10, yOffset);
     yOffset += lineHeight;
-    ctx.fillText(`State: ${npcState}`, rightBoxX + 10, yOffset);
+    ctx.fillText(`State: ${npcState}`, rightPanelX + 10, yOffset);
     yOffset += lineHeight;
-    ctx.fillText(`Visible: ${npc.isVisible}`, rightBoxX + 10, yOffset);
+    ctx.fillText(`Visible: ${npc.isVisible}`, rightPanelX + 10, yOffset);
     yOffset += lineHeight;
     if (npcLastKnownPlayerPos) {
-        ctx.fillText(`Last Player Pos: (${npcLastKnownPlayerPos.x.toFixed(2)}, ${npcLastKnownPlayerPos.y.toFixed(2)})`, rightBoxX + 10, yOffset);
+        ctx.fillText(`Last Player Pos: (${npcLastKnownPlayerPos.x.toFixed(2)}, ${npcLastKnownPlayerPos.y.toFixed(2)})`, rightPanelX + 10, yOffset);
     }
 }
 
@@ -693,15 +1070,28 @@ function drawMapOverlay() {
 
 // Handle player movement
 function movePlayer() {
-    // Handle sensitive jumping physics
+    // Simplified, smooth jumping physics
     if (player.height > 0 || player.verticalSpeed !== 0) {
-        // If space is held and still rising, use floaty gravity; if released or falling, use stronger gravity
-        if (keys[" "] && player.verticalSpeed > 0) {
+        // Apply gravity based on whether space is held
+        if (keys[" "] && player.verticalSpeed > 0 && player.height < MAX_JUMP_HEIGHT) {
+            // Lighter gravity when holding space and rising
             player.verticalSpeed += GRAVITY_UP;
         } else {
+            // Stronger gravity when falling or at peak
             player.verticalSpeed += GRAVITY_DOWN;
         }
-        player.height += player.verticalSpeed; // Normal height change
+        
+        // Smooth deceleration near peak
+        if (player.verticalSpeed > 0) {
+            const distanceToMax = MAX_JUMP_HEIGHT - player.height;
+            if (distanceToMax < SMOOTH_ZONE && distanceToMax > 0) {
+                // Gradually reduce upward velocity as we approach max
+                const smoothFactor = distanceToMax / SMOOTH_ZONE;
+                player.verticalSpeed *= (0.7 + smoothFactor * 0.3); // Slow down more as we get closer
+            }
+        }
+        
+        player.height += player.verticalSpeed;
         
         // Ground collision
         if (player.height <= 0) {
@@ -711,38 +1101,43 @@ function movePlayer() {
             jumpCharge = 0;
             jumpStartTime = 0;
         }
-        // Ceiling collision
+        
+        // Ceiling collision - smooth stop
         if (player.height >= MAX_JUMP_HEIGHT) {
             player.height = MAX_JUMP_HEIGHT;
-            player.verticalSpeed = 0;
+            if (player.verticalSpeed > 0) {
+                player.verticalSpeed = 0;
+            }
+            // Start falling
+            player.verticalSpeed += GRAVITY_DOWN;
         }
     }
 
-    // Handle jump with space (on press, not release)
+    // Handle jump input
     if (keys[" "] && !jumpPressedLastFrame && !player.isJumping && player.height === 0) {
-        player.verticalSpeed = JUMP_FORCE; // Normal jump force
+        player.verticalSpeed = JUMP_FORCE;
         player.isJumping = true;
-        jumpCharge = MIN_JUMP_HEIGHT;
         jumpStartTime = performance.now() / 1000;
     }
     
-    // Increase jump height while space is held
+    // Variable jump height - holding space increases height
     if (keys[" "] && player.isJumping && player.verticalSpeed > 0) {
         const currentTime = performance.now() / 1000;
         const timeHeld = currentTime - jumpStartTime;
         
-        // More gradual height increase during short hop window
+        // Allow variable jump height based on how long space is held
         if (timeHeld < SHORT_HOP_WINDOW) {
-            jumpCharge += JUMP_CHARGE_RATE * 0.5;
-        } else {
-            jumpCharge += JUMP_CHARGE_RATE;
+            // Short hop - less upward boost
+            if (player.verticalSpeed < JUMP_FORCE * 0.6) {
+                player.verticalSpeed = JUMP_FORCE * 0.6;
+            }
+        } else if (timeHeld < SHORT_HOP_WINDOW * 2) {
+            // Medium jump - normal boost
+            if (player.verticalSpeed < JUMP_FORCE) {
+                player.verticalSpeed = JUMP_FORCE;
+            }
         }
-        
-        if (jumpCharge > MAX_JUMP_HEIGHT) jumpCharge = MAX_JUMP_HEIGHT;
-        
-        // Smooth transition between min and max jump height
-        const jumpProgress = (jumpCharge - MIN_JUMP_HEIGHT) / (MAX_JUMP_HEIGHT - MIN_JUMP_HEIGHT);
-        player.verticalSpeed = JUMP_FORCE * (MIN_JUMP_HEIGHT + (MAX_JUMP_HEIGHT - MIN_JUMP_HEIGHT) * jumpProgress) / MAX_JUMP_HEIGHT;
+        // Long hold allows reaching max height naturally
     }
     
     jumpPressedLastFrame = keys[" "];
@@ -771,25 +1166,45 @@ function movePlayer() {
 
     // Handle smooth movement with acceleration and friction
     if (collisionEnabled) {
-        // Calculate desired movement direction
+        // Calculate desired movement direction (use 1.0 since we normalize anyway)
         let desiredVelocityX = 0;
         let desiredVelocityY = 0;
         
         if (keys["w"]) {
-            desiredVelocityX += Math.cos(player.angle) * SPEED;
-            desiredVelocityY += Math.sin(player.angle) * SPEED;
+            desiredVelocityX += Math.cos(player.angle);
+            desiredVelocityY += Math.sin(player.angle);
         }
         if (keys["s"]) {
-            desiredVelocityX -= Math.cos(player.angle) * SPEED;
-            desiredVelocityY -= Math.sin(player.angle) * SPEED;
+            desiredVelocityX -= Math.cos(player.angle);
+            desiredVelocityY -= Math.sin(player.angle);
+        }
+        
+        // Strafe left/right when in mouse look mode, otherwise turn
+        if (mouseLookEnabled) {
+            // Strafe left (A key)
+            if (keys["a"]) {
+                desiredVelocityX += Math.cos(player.angle - Math.PI / 2);
+                desiredVelocityY += Math.sin(player.angle - Math.PI / 2);
+            }
+            // Strafe right (D key)
+            if (keys["d"]) {
+                desiredVelocityX += Math.cos(player.angle + Math.PI / 2);
+                desiredVelocityY += Math.sin(player.angle + Math.PI / 2);
+            }
         }
 
         // Apply acceleration
         if (desiredVelocityX !== 0 || desiredVelocityY !== 0) {
-            // Normalize desired velocity
+            // Normalize desired velocity to keep speed consistent (prevents diagonal movement from being faster)
             const length = Math.sqrt(desiredVelocityX * desiredVelocityX + desiredVelocityY * desiredVelocityY);
-            desiredVelocityX = (desiredVelocityX / length) * MAX_SPEED;
-            desiredVelocityY = (desiredVelocityY / length) * MAX_SPEED;
+            // Safety check: avoid division by zero
+            if (length > 0.0001) {
+                desiredVelocityX = (desiredVelocityX / length) * MAX_SPEED;
+                desiredVelocityY = (desiredVelocityY / length) * MAX_SPEED;
+            } else {
+                desiredVelocityX = 0;
+                desiredVelocityY = 0;
+            }
 
             // Accelerate towards desired velocity
             playerVelocity.x += (desiredVelocityX - playerVelocity.x) * ACCELERATION;
@@ -818,59 +1233,104 @@ function movePlayer() {
                 player.x = newX;
                 player.y = newY;
             } else {
-                // If collision occurs, try sliding
-                const slideX = playerVelocity.x * SLIDE_SPEED_MULTIPLIER;
-                const slideY = playerVelocity.y * SLIDE_SPEED_MULTIPLIER;
-                
-                // Try X slide first
-                const newSlideX = player.x + slideX;
+                // If collision occurs, try sliding along walls
+                // Try X movement first (slide along Y axis)
+                const newSlideX = player.x + playerVelocity.x * SLIDE_SPEED_MULTIPLIER;
                 const slideMapX = Math.floor(newSlideX);
                 const slideMapY = Math.floor(player.y);
                 
+                let canSlideX = false;
                 if (slideMapX >= 1 && slideMapX < rooms[currentRoom][0].length - 1 &&
                     slideMapY >= 1 && slideMapY < rooms[currentRoom].length - 1 &&
                     rooms[currentRoom][slideMapY][slideMapX] === 0) {
                     player.x = newSlideX;
-                } else {
-                    // If X slide failed, try Y slide
-                    const newSlideY = player.y + slideY;
-                    const slideMapX2 = Math.floor(player.x);
-                    const slideMapY2 = Math.floor(newSlideY);
-                    
-                    if (slideMapX2 >= 1 && slideMapX2 < rooms[currentRoom][0].length - 1 &&
-                        slideMapY2 >= 1 && slideMapY2 < rooms[currentRoom].length - 1 &&
-                        rooms[currentRoom][slideMapY2][slideMapX2] === 0) {
-                        player.y = newSlideY;
-                    }
+                    canSlideX = true;
                 }
                 
-                // Reduce velocity when hitting walls
-                playerVelocity.x *= 0.5;
-                playerVelocity.y *= 0.5;
+                // Try Y movement (slide along X axis)
+                const newSlideY = player.y + playerVelocity.y * SLIDE_SPEED_MULTIPLIER;
+                const slideMapX2 = Math.floor(player.x);
+                const slideMapY2 = Math.floor(newSlideY);
+                
+                let canSlideY = false;
+                if (slideMapX2 >= 1 && slideMapX2 < rooms[currentRoom][0].length - 1 &&
+                    slideMapY2 >= 1 && slideMapY2 < rooms[currentRoom].length - 1 &&
+                    rooms[currentRoom][slideMapY2][slideMapX2] === 0) {
+                    player.y = newSlideY;
+                    canSlideY = true;
+                }
+                
+                // If we can slide in at least one direction, keep some velocity
+                if (canSlideX || canSlideY) {
+                    // Preserve velocity in the direction we can slide
+                    if (!canSlideX) playerVelocity.x *= 0.3; // Reduce X velocity if can't slide X
+                    if (!canSlideY) playerVelocity.y *= 0.3; // Reduce Y velocity if can't slide Y
+                } else {
+                    // Can't slide at all, reduce velocity more
+                    playerVelocity.x *= 0.2;
+                    playerVelocity.y *= 0.2;
+                }
             }
         }
     } else {
         // No collision - move freely with acceleration
+        let desiredVelocityX = 0;
+        let desiredVelocityY = 0;
+        
         if (keys["w"]) {
-            playerVelocity.x += Math.cos(player.angle) * SPEED * ACCELERATION;
-            playerVelocity.y += Math.sin(player.angle) * SPEED * ACCELERATION;
+            desiredVelocityX += Math.cos(player.angle);
+            desiredVelocityY += Math.sin(player.angle);
         }
         if (keys["s"]) {
-            playerVelocity.x -= Math.cos(player.angle) * SPEED * ACCELERATION;
-            playerVelocity.y -= Math.sin(player.angle) * SPEED * ACCELERATION;
+            desiredVelocityX -= Math.cos(player.angle);
+            desiredVelocityY -= Math.sin(player.angle);
         }
         
-        // Apply friction
-        playerVelocity.x *= (1 - FRICTION);
-        playerVelocity.y *= (1 - FRICTION);
+        // Strafe left/right when in mouse look mode
+        if (mouseLookEnabled) {
+            // Strafe left (A key)
+            if (keys["a"]) {
+                desiredVelocityX += Math.cos(player.angle - Math.PI / 2);
+                desiredVelocityY += Math.sin(player.angle - Math.PI / 2);
+            }
+            // Strafe right (D key)
+            if (keys["d"]) {
+                desiredVelocityX += Math.cos(player.angle + Math.PI / 2);
+                desiredVelocityY += Math.sin(player.angle + Math.PI / 2);
+            }
+        }
+        
+        // Normalize to keep speed consistent (prevents diagonal movement from being faster)
+        if (desiredVelocityX !== 0 || desiredVelocityY !== 0) {
+            const length = Math.sqrt(desiredVelocityX * desiredVelocityX + desiredVelocityY * desiredVelocityY);
+            // Safety check: avoid division by zero
+            if (length > 0.0001) {
+                desiredVelocityX = (desiredVelocityX / length) * MAX_SPEED;
+                desiredVelocityY = (desiredVelocityY / length) * MAX_SPEED;
+            } else {
+                desiredVelocityX = 0;
+                desiredVelocityY = 0;
+            }
+            
+            // Accelerate towards desired velocity
+            playerVelocity.x += (desiredVelocityX - playerVelocity.x) * ACCELERATION;
+            playerVelocity.y += (desiredVelocityY - playerVelocity.y) * ACCELERATION;
+        } else {
+            // Apply friction when no movement keys are pressed
+            playerVelocity.x *= (1 - FRICTION);
+            playerVelocity.y *= (1 - FRICTION);
+        }
         
         // Move player
         player.x += playerVelocity.x;
         player.y += playerVelocity.y;
     }
 
-    if (keys["a"]) player.angle -= TURN_SPEED;
-    if (keys["d"]) player.angle += TURN_SPEED;
+    // Only turn with A/D when NOT in mouse look mode
+    if (!mouseLookEnabled) {
+        if (keys["a"]) player.angle -= TURN_SPEED;
+        if (keys["d"]) player.angle += TURN_SPEED;
+    }
 
     // Adjust speed and FOV in debug mode
     if (debugMenuVisible) {
@@ -893,7 +1353,7 @@ function movePlayer() {
     }
 }
 
-// Handle map editing
+// Handle map editing and pointer lock
 canvas.addEventListener("click", (e) => {
   if (debugMenuVisible) {
     const miniMapSize = 150;
@@ -904,6 +1364,12 @@ canvas.addEventListener("click", (e) => {
     if (x >= 0 && x < rooms[currentRoom][0].length && y >= 0 && y < rooms[currentRoom].length) {
       rooms[currentRoom][y][x] = rooms[currentRoom][y][x] === 1 ? 0 : 1;
     }
+  } else if (mouseLookEnabled && document.pointerLockElement !== canvas) {
+    // Request pointer lock when clicking canvas if mouse look is enabled
+    canvas.requestPointerLock();
+  } else if (!debugMenuVisible && e.button === 0) {
+    // Left click to shoot (only if not in debug menu)
+    shootGun();
   }
 });
 
@@ -911,13 +1377,26 @@ canvas.addEventListener("click", (e) => {
 const keys = {};
 document.addEventListener("keydown", (e) => {
   keys[e.key] = true;
-  if (e.key === "Escape") {
+  if (e.key === "`" || e.key === "Backquote") {
     debugMenuVisible = !debugMenuVisible;
-    if (mouseLookEnabled) {
-      mouseLookEnabled = false;
-      document.exitPointerLock();
-      cameraVelocity = { x: 0, y: 0 }; // Reset camera velocity
-      verticalAngle = 0; // Reset vertical angle
+    
+    if (debugMenuVisible) {
+      // Opening debug menu - fade in sound and start animation
+      debugMenuSound.currentTime = 0;
+      debugMenuSoundTargetVolume = 0.2;
+      debugMenuSound.play().catch(e => console.log("Could not play debug sound:", e));
+      debugMenuAnimation = 0; // Start animation from 0
+      
+      // Don't exit pointer lock - keep mouse locked
+    } else {
+      // Closing debug menu - immediately stop sound and fade out animation
+      debugMenuSoundTargetVolume = 0;
+      debugMenuSound.volume = 0;
+      debugMenuSound.pause();
+      debugMenuSound.currentTime = 0;
+      debugMenuAnimation = 0;
+      
+      // Don't need to re-request pointer lock since we never exited it
     }
   }
   if (e.key === "m") miniMapVisible = !miniMapVisible;
@@ -926,21 +1405,35 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "=") {
     mouseLookEnabled = !mouseLookEnabled;
     if (mouseLookEnabled) {
+      // Enable mouse look
       canvas.requestPointerLock();
     } else {
+      // Disable mouse look (keyboard controls for camera)
       document.exitPointerLock();
       cameraVelocity = { x: 0, y: 0 }; // Reset camera velocity
       verticalAngle = 0; // Reset vertical angle
     }
   }
-  if (e.key === "r") {
-    player.x = 1.5;
-    player.y = 1.5;
-    player.angle = 0;
-    cameraVelocity = { x: 0, y: 0 }; // Reset camera velocity
-    verticalAngle = 0; // Reset vertical angle
+  if (e.key === "r" || e.key === "R") {
+    if (debugMenuVisible) {
+      // Reset player position in debug mode
+      player.x = 1.5;
+      player.y = 1.5;
+      player.angle = 0;
+      cameraVelocity = { x: 0, y: 0 }; // Reset camera velocity
+      verticalAngle = 0; // Reset vertical angle
+    } else {
+      // Reload gun when not in debug mode
+      reloadGun();
+    }
   }
   if (e.key === "f") showFPS = !showFPS;
+  
+  // Cycle through NPC sprites with '.' key
+  if (e.key === ".") {
+    currentNpcIndex = (currentNpcIndex + 1) % npcSprites.length;
+    npc.sprite = npcSprites[currentNpcIndex];
+  }
   
   // Adjust sensitivity in debug menu
   if (debugMenuVisible) {
@@ -953,6 +1446,255 @@ document.addEventListener("keydown", (e) => {
   }
 });
 document.addEventListener("keyup", (e) => (keys[e.key] = false));
+
+// Gun functions
+function drawGun() {
+    // Don't draw gun when debug menu is visible (it overlaps the right debug box)
+    if (debugMenuVisible) return;
+    
+    let gunImage = null;
+    
+    if (gunState === 'idle') {
+        gunImage = gunIdle;
+    } else if (gunState === 'shooting') {
+        // Animation sequence: 0 -> gun_shoot.png, 1 -> gun_shoot2.png, 2 -> gun_shoot.png
+        if (gunFrame === 2) {
+            gunImage = gunShootFrames[0]; // Back to first shoot frame
+        } else {
+            gunImage = gunShootFrames[gunFrame];
+        }
+    } else if (gunState === 'reloading') {
+        gunImage = gunReloadFrames[gunFrame];
+    }
+    
+    if (gunImage && gunImage.complete) {
+        // Calculate gun size (maintain aspect ratio) - easily adjustable via GUN_SIZE_MULTIPLIER
+        const gunWidth = canvas.width * GUN_SIZE_MULTIPLIER;
+        const gunHeight = gunWidth * (gunImage.height / gunImage.width);
+        
+        // Position in bottom right corner with vibration offset
+        const gunX = canvas.width - gunWidth + gunVibrationX;
+        const gunY = canvas.height - gunHeight + gunVibrationY;
+        
+        ctx.drawImage(gunImage, gunX, gunY, gunWidth, gunHeight);
+    }
+}
+
+function shootGun() {
+    // Check if out of ammo
+    if (gunState === 'idle' && ammo === 0) {
+        // Play empty sound and vibrate gun
+        emptySound.currentTime = 0;
+        emptySound.play().catch(e => console.log("Could not play empty sound:", e));
+        gunVibrationIntensity = GUN_VIBRATION_INTENSITY;
+        return;
+    }
+    
+    // Only shoot if not already shooting or reloading and have ammo
+    if (gunState === 'idle' && ammo > 0) {
+        gunState = 'shooting';
+        gunFrame = 0;
+        gunAnimationTimer = 0;
+        ammo--; // Decrease ammo
+        
+        // Play random shoot sound
+        const randomShoot = shootSounds[Math.floor(Math.random() * shootSounds.length)];
+        randomShoot.currentTime = 0;
+        randomShoot.play().catch(e => console.log("Could not play shoot sound:", e));
+        
+        // Add screen shake for JUICE
+        screenShakeIntensity = SCREEN_SHAKE_INTENSITY;
+        
+        // Schedule shell drop sound (random)
+        shellSoundTimer = SHELL_SOUND_DELAY;
+        
+        // Create a new bullet when shooting
+        const bullet = new Bullet(player.x, player.y, player.angle, verticalAngle);
+        bullets.push(bullet);
+        
+        // Immediately check for hit at center of screen (instant hit detection)
+        checkInstantHit();
+    }
+}
+
+// Instant hit detection - raycasts from center of screen
+function checkInstantHit() {
+    const rayAngle = player.angle;
+    const rayDirX = Math.cos(rayAngle);
+    const rayDirY = Math.sin(rayAngle);
+    
+    let rayX = player.x;
+    let rayY = player.y;
+    let rayZ = player.height; // Start at player height
+    let distance = 0;
+    const stepSize = 0.05;
+    let hitSomething = false;
+    let hitX = 0, hitY = 0, hitZ = 0;
+    
+    // Cast ray until we hit something or reach max range
+    while (distance < BULLET_HIT_RANGE && !hitSomething) {
+        rayX += rayDirX * stepSize;
+        rayY += rayDirY * stepSize;
+        // Add vertical component based on where we're aiming
+        rayZ += Math.sin(verticalAngle) * stepSize;
+        distance += stepSize;
+        
+        // Check wall collision
+        const mapX = Math.floor(rayX);
+        const mapY = Math.floor(rayY);
+        
+        if (mapX >= 0 && mapX < rooms[currentRoom][0].length &&
+            mapY >= 0 && mapY < rooms[currentRoom].length) {
+            if (rooms[currentRoom][mapY][mapX] === 1) {
+                hitSomething = true;
+                hitX = rayX;
+                hitY = rayY;
+                hitZ = rayZ;
+                break;
+            }
+        }
+        
+        // Check NPC collision
+        if (npc.isVisible) {
+            const dx = rayX - npc.x;
+            const dy = rayY - npc.y;
+            const distToNpc = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distToNpc < 0.5) {
+                hitSomething = true;
+                hitX = rayX;
+                hitY = rayY;
+                hitZ = rayZ;
+                break;
+            }
+        }
+    }
+    
+    // If we hit something within range, create a hit marker at the hit position
+    if (hitSomething) {
+        const hitMarker = new HitMarker(hitX, hitY, hitZ);
+        hitMarkers.push(hitMarker);
+    }
+}
+
+function drawCrosshair() {
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const size = 8; // Size of crosshair lines
+    const thickness = 2; // Thickness of crosshair lines
+    
+    ctx.strokeStyle = "white";
+    ctx.lineWidth = thickness;
+    
+    // Draw horizontal line
+    ctx.beginPath();
+    ctx.moveTo(centerX - size, centerY);
+    ctx.lineTo(centerX + size, centerY);
+    ctx.stroke();
+    
+    // Draw vertical line
+    ctx.beginPath();
+    ctx.moveTo(centerX, centerY - size);
+    ctx.lineTo(centerX, centerY + size);
+    ctx.stroke();
+}
+
+function reloadGun() {
+    // Only reload if not already shooting or reloading and ammo is not full
+    if (gunState === 'idle' && ammo < MAX_AMMO) {
+        gunState = 'reloading';
+        gunFrame = 0;
+        gunAnimationTimer = 0;
+        
+        // Play reload sound
+        reloadSound.currentTime = 0; // Reset to start
+        reloadSound.play().catch(e => console.log("Could not play reload sound:", e));
+    }
+}
+
+function updateGunAnimation(deltaTime) {
+    // Update screen shake
+    if (screenShakeIntensity > 0) {
+        screenShakeX = (Math.random() - 0.5) * screenShakeIntensity;
+        screenShakeY = (Math.random() - 0.5) * screenShakeIntensity;
+        screenShakeIntensity *= SCREEN_SHAKE_DECAY;
+        if (screenShakeIntensity < 0.1) {
+            screenShakeIntensity = 0;
+            screenShakeX = 0;
+            screenShakeY = 0;
+        }
+    }
+    
+    // Update gun vibration
+    if (gunVibrationIntensity > 0) {
+        gunVibrationX = (Math.random() - 0.5) * gunVibrationIntensity;
+        gunVibrationY = (Math.random() - 0.5) * gunVibrationIntensity;
+        gunVibrationIntensity *= GUN_VIBRATION_DECAY;
+        if (gunVibrationIntensity < 0.1) {
+            gunVibrationIntensity = 0;
+            gunVibrationX = 0;
+            gunVibrationY = 0;
+        }
+    }
+    
+    // Update shell sound timer
+    if (shellSoundTimer > 0) {
+        shellSoundTimer -= deltaTime;
+        if (shellSoundTimer <= 0) {
+            // Play random shell drop sound
+            const randomShell = shellSounds[Math.floor(Math.random() * shellSounds.length)];
+            randomShell.currentTime = 0; // Reset to start
+            randomShell.play().catch(e => console.log("Could not play shell sound:", e));
+            shellSoundTimer = 0;
+        }
+    }
+    
+    if (gunState === 'shooting') {
+        gunAnimationTimer += deltaTime;
+        if (gunAnimationTimer >= GUN_SHOOT_FRAME_TIME) {
+            gunAnimationTimer = 0;
+            gunFrame++;
+            // Animation sequence: 0 (shoot) -> 1 (shoot2) -> 2 (shoot again) -> idle
+            if (gunFrame >= GUN_SHOOT_FRAMES) {
+                gunState = 'idle';
+                gunFrame = 0;
+            }
+        }
+    } else if (gunState === 'reloading') {
+        gunAnimationTimer += deltaTime;
+        if (gunAnimationTimer >= GUN_RELOAD_FRAME_TIME) {
+            gunAnimationTimer = 0;
+            gunFrame++;
+            if (gunFrame >= GUN_RELOAD_FRAMES) {
+                gunState = 'idle';
+                gunFrame = 0;
+                ammo = MAX_AMMO; // Refill ammo after reload animation completes
+            }
+        }
+    }
+}
+
+function updateBullets(deltaTime) {
+    // Update all active bullets
+    for (let i = bullets.length - 1; i >= 0; i--) {
+        bullets[i].update(deltaTime);
+        
+        // Remove inactive bullets
+        if (!bullets[i].active) {
+            bullets.splice(i, 1);
+        }
+    }
+    
+    // Update hit markers
+    for (let i = hitMarkers.length - 1; i >= 0; i--) {
+        hitMarkers[i].update(deltaTime);
+        
+        // Remove inactive hit markers
+        if (!hitMarkers[i].active) {
+            hitMarkers.splice(i, 1);
+        }
+    }
+}
 
 // Update the game loop function
 function gameLoop() {
@@ -986,8 +1728,11 @@ function gameLoop() {
                                       verticalAngle + cameraVelocity.y));
 
         // Update game state
+        const deltaTime = elapsed / 1000; // Convert to seconds
         movePlayer();
         moveNPC();
+        updateGunAnimation(deltaTime);
+        updateBullets(deltaTime);
         render();
         
         lastFrameTime = currentTime;
@@ -1115,6 +1860,9 @@ function chooseNextTarget(currentX, currentY) {
 // Function to move NPC
 function moveNPC() {
     if (!npc.isVisible) return;
+    
+    // Stop moving if dialogue menu is open
+    if (dialogueMenuVisible) return;
 
     // Update state timers
     if (npcState === 'resting') {
